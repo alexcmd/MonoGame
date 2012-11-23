@@ -74,8 +74,11 @@ namespace Microsoft.Xna.Framework.Audio
 #endif
 
         private string _name;
-		private string _filename = "";		
+#if !WINRT
+		private string _filename = "";
         private byte[] _data;
+#endif
+
 #if WINRT
         internal SoundEffect()
         {
@@ -303,11 +306,14 @@ namespace Microsoft.Xna.Framework.Audio
 
 		public SoundEffectInstance CreateInstance()
 		{
-            var instance = new SoundEffectInstance();
 #if WINRT
-            instance._effect = this;
-            instance._voice = new SourceVoice(SoundEffect.Device, _format, VoiceFlags.None, XAudio2.MaximumFrequencyRatio);            
-#else			
+		    SourceVoice voice = null;
+            if (Device != null)
+                voice = new SourceVoice(Device, _format, VoiceFlags.None, XAudio2.MaximumFrequencyRatio);
+
+            var instance = new SoundEffectInstance(this, voice);
+#else
+            var instance = new SoundEffectInstance();	
 			instance.Sound = _sound;			
 #endif
             return instance;
@@ -388,8 +394,8 @@ namespace Microsoft.Xna.Framework.Audio
         }
 
 #if WINRT        
-        public static XAudio2 Device;        
-        public static MasteringVoice MasterVoice;
+        internal static XAudio2 Device { get; private set; }
+        internal static MasteringVoice MasterVoice { get; private set; }
 
         private static bool _device3DDirty = true;
         private static Speakers _speakers = Speakers.Stereo;
@@ -414,7 +420,7 @@ namespace Microsoft.Xna.Framework.Audio
 
         private static X3DAudio _device3D;
 
-        public static X3DAudio Device3D
+        internal static X3DAudio Device3D
         {
             get
             {
@@ -430,16 +436,29 @@ namespace Microsoft.Xna.Framework.Audio
 
         static SoundEffect()
         {
+            // This cannot fail.
             Device = new XAudio2();
-            if (Device.StartEngine() != Result.Ok)
-                throw new Exception("XAudio2.StartEngine has failed.");
 
-            // Let windows autodetect number of channels and sample rate.
-            MasterVoice = new MasteringVoice(Device, XAudio2.DefaultChannels, XAudio2.DefaultSampleRate);            
-            MasterVoice.SetVolume(_masterVolume, 0);
+            try
+            {
+                Device.StartEngine();
 
-            // The autodetected value of MasterVoice.ChannelMask corresponds to the speaker layout.
-            Speakers = (Speakers)MasterVoice.ChannelMask;
+                // Let windows autodetect number of channels and sample rate.
+                MasterVoice = new MasteringVoice(Device, XAudio2.DefaultChannels, XAudio2.DefaultSampleRate);            
+                MasterVoice.SetVolume(_masterVolume, 0);
+
+                // The autodetected value of MasterVoice.ChannelMask corresponds to the speaker layout.
+                Speakers = (Speakers)MasterVoice.ChannelMask;
+            }
+            catch
+            {
+                // Release the device and null it as
+                // we have no audio support.
+                Device.Dispose();
+                Device = null;
+                MasterVoice = null;
+            }
+
         }
 
         // Does someone actually need to call this if it only happens when the whole

@@ -71,8 +71,8 @@ namespace Microsoft.Xna.Framework.Graphics
         static readonly byte[] Bytecode = LoadEffectResource(
 #if DIRECTX
             "Microsoft.Xna.Framework.Graphics.Effect.Resources.BasicEffect.dx11.mgfxo"
-#elif PSS 
-            "MonoGame.Framework.PSSuite.PSSuite.Graphics.Resources.BasicEffect.cgx" //FIXME: This shader is totally incomplete
+#elif PSM 
+            "MonoGame.Framework.PSMobile.PSSuite.Graphics.Resources.BasicEffect.cgx" //FIXME: This shader is totally incomplete
 #else
             "Microsoft.Xna.Framework.Graphics.Effect.Resources.BasicEffect.ogl.mgfxo"
 #endif
@@ -523,8 +523,8 @@ namespace Microsoft.Xna.Framework.Graphics
                 }
 
                 dirtyFlags &= ~EffectDirtyFlags.ShaderIndex;
-#if PSS
-#warning Major hack as PSS Shaders don't support multiple Techinques (yet)
+#if PSM
+#warning Major hack as PSM Shaders don't support multiple Techinques (yet)
                 shaderIndex = 0;
 #endif
 

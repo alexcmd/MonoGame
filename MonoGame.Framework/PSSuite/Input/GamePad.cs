@@ -62,7 +62,7 @@ using Microsoft.Xna.Framework.Graphics;
 		private int _buttons;
 		private Vector2 _leftStick, _rightStick;
 		
-		#region PssButtons -> Buttons Map
+		#region PSMButtons -> Buttons Map
 		private static Dictionary<PssGamePadButtons, Buttons> _buttonsMap = new Dictionary<PssGamePadButtons, Buttons>{
 			{ PssGamePadButtons.Cross, Buttons.A },
 			{ PssGamePadButtons.Circle, Buttons.B },
@@ -156,7 +156,7 @@ using Microsoft.Xna.Framework.Graphics;
         {
             var instance = GamePad.Instance;
 			instance.Update();
-            var state = new GamePadState(new GamePadThumbSticks(), new GamePadTriggers(), new GamePadButtons((Buttons)instance._buttons), new GamePadDPad((Buttons)instance._buttons));
+            var state = new GamePadState(new GamePadThumbSticks(instance._leftStick, instance._rightStick), new GamePadTriggers(), new GamePadButtons((Buttons)instance._buttons), new GamePadDPad((Buttons)instance._buttons));
             instance.Reset();
             return state;
         }

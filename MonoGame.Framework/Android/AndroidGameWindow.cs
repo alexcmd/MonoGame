@@ -55,7 +55,7 @@ using OpenTK.Platform.Android;
 using OpenTK;
 using OpenTK.Platform;
 using OpenTK.Graphics;
-//using OpenTK.Graphics.ES20;
+using OpenTK.Graphics.ES20;
 
 using Microsoft.Xna.Framework.Input;
 using Microsoft.Xna.Framework.Input.Touch;
@@ -70,7 +70,6 @@ namespace Microsoft.Xna.Framework
         private DisplayOrientation supportedOrientations = DisplayOrientation.Default;
         private DisplayOrientation _currentOrientation;
         private AndroidTouchEventManager _touchManager = null;
-		private bool exiting = false;
         private bool _contextWasLost = false;
 
         public bool TouchEnabled
@@ -86,9 +85,7 @@ namespace Microsoft.Xna.Framework
         }		
 						
         private void Initialize()
-        {
-
-            this.Closed +=	new EventHandler<EventArgs>(GameWindow_Closed);            
+        {            
 			clientBounds = new Rectangle(0, 0, Context.Resources.DisplayMetrics.WidthPixels, Context.Resources.DisplayMetrics.HeightPixels);
 
             this.RequestFocus();
@@ -97,24 +94,6 @@ namespace Microsoft.Xna.Framework
             _touchManager = new AndroidTouchEventManager(_game);
         }
 		
-		void GameWindow_Closed(object sender,EventArgs e)
-        {   
-			if (!exiting)
-			{
-				exiting = true;
-				_game.DoExiting();
-			}
-			try
-			{
-        		_game.Exit();
-			}
-			catch(NullReferenceException)
-			{
-				// just in case the game is null
-			}
-
-		}
-
 		protected override void OnLoad (EventArgs e)
 		{
 			base.OnLoad (e);			
@@ -143,42 +122,35 @@ namespace Microsoft.Xna.Framework
             return true;
         }
 
-        ~AndroidGameWindow()
-		{
-			//
-		}
-
-        internal void OnRestart()
-        {
-            // If restarting, check if the context was lost. It appears that it always is,
-            // but I suspect that it's possible to avoid this case as some games don't need
-            // to reload their textures after switching back from another app.
-            _contextWasLost = GraphicsContext == null || GraphicsContext.IsDisposed;
-        }
-
 		protected override void CreateFrameBuffer()
 		{
             Android.Util.Log.Debug("MonoGame", "AndroidGameWindow.CreateFrameBuffer");
-#if true			
 			try
             {
                 GLContextVersion = GLContextVersion.Gles2_0;
-				base.CreateFrameBuffer();
-                Android.Util.Log.Debug("MonoGame", "AndroidGameWindow.CreateFrameBuffer");
-		    } 
+				try
+				{
+					base.CreateFrameBuffer();
+				}
+				catch(Exception)
+				{
+					// try again using a more basic mode which hopefully the device will support
+					GraphicsMode = new AndroidGraphicsMode(0, 0, 0, 0, 0, false);
+					base.CreateFrameBuffer();
+				}
+                All status = GL.CheckFramebufferStatus(All.Framebuffer);
+                Android.Util.Log.Debug("MonoGame", "Framebuffer Status: " + status.ToString());
+            } 
 			catch (Exception) 
-#endif			
 			{
-                throw new NotSupportedException("Could not create OpenGLES 2.0 frame buffer");
+				throw new NotSupportedException("Could not create OpenGLES 2.0 frame buffer");
 		    }
             if (_game.GraphicsDevice != null && _contextWasLost)
             {
-                // DeviceResetting events
-                _game.graphicsDeviceManager.OnDeviceResetting(EventArgs.Empty);
-                _game.GraphicsDevice.OnDeviceResetting();
-
                 _game.GraphicsDevice.Initialize();
+                Android.Util.Log.Debug("MonoGame", "Begin reloading graphics content");
                 Microsoft.Xna.Framework.Content.ContentManager.ReloadGraphicsContent();
+                Android.Util.Log.Debug("MonoGame", "End reloading graphics content");
 
                 // DeviceReset events
                 _game.graphicsDeviceManager.OnDeviceReset(EventArgs.Empty);
@@ -187,14 +159,20 @@ namespace Microsoft.Xna.Framework
                 _contextWasLost = false;
             }
 
-            if (!GraphicsContext.IsCurrent)
-                MakeCurrent();
+            MakeCurrent();
 		}
 
         protected override void DestroyFrameBuffer()
         {
+            // DeviceResetting events
+            _game.graphicsDeviceManager.OnDeviceResetting(EventArgs.Empty);
+            _game.GraphicsDevice.OnDeviceResetting();
+
             Android.Util.Log.Debug("MonoGame", "AndroidGameWindow.DestroyFrameBuffer");
+
             base.DestroyFrameBuffer();
+
+            _contextWasLost = GraphicsContext == null || GraphicsContext.IsDisposed;
         }
 
         #region AndroidGameView Methods
@@ -206,7 +184,6 @@ namespace Microsoft.Xna.Framework
             if (GraphicsContext == null || GraphicsContext.IsDisposed)
                 return;
 
-            //Should not happen at all..
             if (!GraphicsContext.IsCurrent)
                 MakeCurrent();
 
@@ -216,6 +193,12 @@ namespace Microsoft.Xna.Framework
         protected override void OnUpdateFrame(FrameEventArgs e)
         {
             base.OnUpdateFrame(e);
+
+            if (_contextWasLost)
+                return;
+
+            if (!GraphicsContext.IsCurrent)
+                MakeCurrent();
 
             Threading.Run();
 
@@ -228,7 +211,7 @@ namespace Microsoft.Xna.Framework
 				else if (_game.GraphicsDevice != null)
 				{ 
 					_game.GraphicsDevice.Clear(Color.Black);
-					_game.GraphicsDevice.Present();
+					_game.Platform.Present();
 				}
             }
         }
@@ -286,6 +269,8 @@ namespace Microsoft.Xna.Framework
                     newOrientation = DisplayOrientation.LandscapeRight;
                 else if ((supported & DisplayOrientation.Portrait) != 0)
                     newOrientation = DisplayOrientation.Portrait;
+                else if ((supported & DisplayOrientation.PortraitUpsideDown) != 0)
+                    newOrientation = DisplayOrientation.PortraitUpsideDown;
             }
 
             DisplayOrientation oldOrientation = CurrentOrientation;
@@ -427,17 +412,19 @@ namespace Microsoft.Xna.Framework
                         {
                             didOrientationChange = true;
                             _currentOrientation = DisplayOrientation.Portrait;
-                            Game.Activity.RequestedOrientation = ScreenOrientation.Portrait;
+                            requestedOrientation = ScreenOrientation.Portrait;
                             requestPortrait = true;
                         }
                     }
 
                     if (didOrientationChange)
                     {
-                        // Disable touch only when switching between landscape and portrait.
-                        // Flipping between landscape left and right does not cause a ISurfaceHolderCallback.SurfaceChanged
+                        // Android doesn't fire Released events for existing touches
+                        // so we need to clear them out.
                         if (wasPortrait != requestPortrait)
-                            _touchManager.Enabled = false;
+                        {
+                            TouchPanel.ReleaseAllTouches();
+                        }
 
                         Game.Activity.RequestedOrientation = requestedOrientation;
 
@@ -460,8 +447,6 @@ namespace Microsoft.Xna.Framework
 
             if (_game.GraphicsDevice != null)
                 _game.graphicsDeviceManager.ResetClientBounds();
-
-            _touchManager.Enabled = true;
         }
 
         void ISurfaceHolderCallback.SurfaceDestroyed(ISurfaceHolder holder)

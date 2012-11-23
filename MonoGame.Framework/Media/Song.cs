@@ -54,15 +54,16 @@ namespace Microsoft.Xna.Framework.Media
     {
 #if IPHONE
 		private AVAudioPlayer _sound;
-#elif PSS
+#elif PSM
         private PSSuiteSong _sound;
 #elif !WINRT
 		private SoundEffectInstance _sound;
 #endif
 		
 		private string _name;
-		private int _playCount;   
-		
+		private int _playCount = 0;
+        bool disposed;
+
 		internal Song(string fileName)
 		{			
 			_name = fileName;
@@ -71,13 +72,18 @@ namespace Microsoft.Xna.Framework.Media
 			_sound = AVAudioPlayer.FromUrl(NSUrl.FromFilename(fileName));
 			_sound.NumberOfLoops = 0;
             _sound.FinishedPlaying += OnFinishedPlaying;
-#elif PSS
+#elif PSM
             _sound = new PSSuiteSong(_name);
 #elif !WINRT       
             _sound = new SoundEffect(_name).CreateInstance();
 #endif
 		}
-				
+
+        ~Song()
+        {
+            Dispose(false);
+        }
+
         public string FilePath
 		{
 			get { return _name; }
@@ -91,19 +97,23 @@ namespace Microsoft.Xna.Framework.Media
         
         void Dispose(bool disposing)
         {
-#if !WINRT
-            if (disposing)
+            if (!disposed)
             {
-                if (_sound != null)
+#if !WINRT
+                if (disposing)
                 {
+                    if (_sound != null)
+                    {
 #if IPHONE
-                    _sound.FinishedPlaying -= OnFinishedPlaying;
+                       _sound.FinishedPlaying -= OnFinishedPlaying;
 #endif
-                    _sound.Dispose();
-                    _sound = null;
+                        _sound.Dispose();
+                        _sound = null;
+                    }
                 }
-            }
 #endif
+                disposed = true;
+            }
         }
         
 		public bool Equals(Song song) 		
