@@ -88,33 +88,23 @@ namespace Microsoft.Xna.Framework.GamerServices
 				
 				if (double.Parse(osVersion, System.Globalization.CultureInfo.InvariantCulture) > 4.1)
 				{
-					
-					lp = GKLocalPlayer.LocalPlayer;
-			        if (lp != null)
-					{
-						Guide.IsVisible = true;
-						lp.Authenticate( delegate(NSError error) 
-						                	{  							              
-												try 
-												{
-													if ( error != null )
-													{
-#if DEBUG									
-														Console.WriteLine(error);
+                    UIApplication.SharedApplication.BeginInvokeOnMainThread(
+                    delegate 
+                    {
+                        lp = GKLocalPlayer.LocalPlayer;
+                        
+    			        if (lp != null)
+    					{
+    						lp.Authenticate( delegate(NSError error) 
+    						                	{  	
+#if DEBUG
+    												if ( error != null )								
+    													Console.WriteLine(error);
 #endif
-													}
-													else
-													{
-														
-													}
-												} 
-												finally 
-												{
-													Guide.IsVisible = false;
-												}
-											}
-						                );
-					}
+    											}
+    						                );
+    					}
+                    } );
 				}
 			}
 			catch (Exception ex) 

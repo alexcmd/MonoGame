@@ -1,6 +1,18 @@
 using System;
 using System.Diagnostics;
 
+#if MONOMAC
+using MonoMac.OpenGL;
+#elif WINDOWS || LINUX
+using OpenTK.Graphics.OpenGL;
+#elif PSM
+using Sce.PlayStation.Core.Graphics;
+#elif GLES
+using OpenTK.Graphics.ES20;
+using EnableCap = OpenTK.Graphics.ES20.All;
+using FrontFaceDirection = OpenTK.Graphics.ES20.All;
+using CullFaceMode = OpenTK.Graphics.ES20.All;
+#endif
 
 namespace Microsoft.Xna.Framework.Graphics
 {
@@ -47,15 +59,72 @@ namespace Microsoft.Xna.Framework.Graphics
 			};
 		}
 
-#if DIRECTX
+#if OPENGL
 
-        internal void ApplyState( GraphicsDevice device )
+        internal void ApplyState(GraphicsDevice device)
+        {
+        	// When rendering offscreen the faces change order.
+            var offscreen = device.GetRenderTargets().Length > 0;
+
+            if (CullMode == CullMode.None)
+            {
+                GL.Disable(EnableCap.CullFace);
+                GraphicsExtensions.CheckGLError();
+            }
+            else
+            {
+                GL.Enable(EnableCap.CullFace);
+                GraphicsExtensions.CheckGLError();
+                GL.CullFace(CullFaceMode.Back);
+                GraphicsExtensions.CheckGLError();
+
+                if (CullMode == CullMode.CullClockwiseFace)
+                {
+                    if (offscreen)
+                        GL.FrontFace(FrontFaceDirection.Cw);
+                    else
+                        GL.FrontFace(FrontFaceDirection.Ccw);
+                    GraphicsExtensions.CheckGLError();
+                }
+                else
+                {
+                    if (offscreen)
+                        GL.FrontFace(FrontFaceDirection.Ccw);
+                    else
+                        GL.FrontFace(FrontFaceDirection.Cw);
+                    GraphicsExtensions.CheckGLError();
+                }
+            }
+
+#if MONOMAC || WINDOWS || LINUX
+			if (FillMode == FillMode.Solid) 
+				GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+            else
+				GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+#else
+            if (FillMode != FillMode.Solid)
+                throw new NotImplementedException();
+#endif
+
+			if (ScissorTestEnable)
+				GL.Enable(EnableCap.ScissorTest);
+			else
+				GL.Disable(EnableCap.ScissorTest);
+            GraphicsExtensions.CheckGLError();
+
+            // TODO: What about DepthBias, SlopeScaleDepthBias, and
+            // MultiSampleAntiAlias... we're not handling these!
+        }
+
+#elif DIRECTX
+
+        internal void ApplyState(GraphicsDevice device)
         {
             if (_state == null)
             {
                 // We're now bound to a device... no one should
                 // be changing the state of this object now!
-                graphicsDevice = device;
+                GraphicsDevice = device;
 
                 // Build the description.
                 var desc = new SharpDX.Direct3D11.RasterizerStateDescription();
@@ -96,10 +165,10 @@ namespace Microsoft.Xna.Framework.Graphics
                 desc.IsDepthClipEnabled = true;
 
                 // Create the state.
-                _state = new SharpDX.Direct3D11.RasterizerState(graphicsDevice._d3dDevice, ref desc);
+                _state = new SharpDX.Direct3D11.RasterizerState(GraphicsDevice._d3dDevice, ref desc);
             }
-            
-            Debug.Assert( graphicsDevice == device, "The state was created for a different device!" );
+
+            Debug.Assert(GraphicsDevice == device, "The state was created for a different device!");
 
             // NOTE: We make the assumption here that the caller has
             // locked the d3dContext for us to use.
@@ -109,6 +178,11 @@ namespace Microsoft.Xna.Framework.Graphics
         }
 
 #endif // DIRECTX
-
+#if PSM
+        internal void ApplyState(GraphicsDevice device)
+        {
+            #warning Unimplemented
+        }
+#endif
     }
 }

@@ -69,7 +69,7 @@ non-infringement.
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-#if !PSS
+#if !PSM
 using System.Drawing;
 #endif
 using System.IO;
@@ -123,6 +123,7 @@ namespace Microsoft.Xna.Framework
         private bool _isFixedTimeStep = true;
 
         private TimeSpan _targetElapsedTime = TimeSpan.FromSeconds(1 / DefaultTargetFramesPerSecond);
+        private TimeSpan _inactiveSleepTime = TimeSpan.FromSeconds(1);
 
         private readonly TimeSpan _maxElapsedTime = TimeSpan.FromMilliseconds(500);
 
@@ -138,13 +139,13 @@ namespace Microsoft.Xna.Framework
             Content = new ContentManager(_services);
 
             Platform = GamePlatform.Create(this);
-            Platform.Activated += Platform_Activated;
-            Platform.Deactivated += Platform_Deactivated;
+            Platform.Activated += OnActivated;
+            Platform.Deactivated += OnDeactivated;
             _services.AddService(typeof(GamePlatform), Platform);
 
-#if WINRT
+#if WINDOWS_STOREAPP
             Platform.ViewStateChanged += Platform_ApplicationViewChanged;
-#endif //WINRT
+#endif
 
 #if MONOMAC || WINDOWS || LINUX
             // Set the window title.
@@ -181,25 +182,37 @@ namespace Microsoft.Xna.Framework
         public void Dispose()
         {
             Dispose(true);
+            GC.SuppressFinalize(this);
             Raise(Disposed, EventArgs.Empty);
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (disposing)
+            if (!_isDisposed)
             {
-                Platform.Dispose();
-
-                // Dispose loaded game components
-                for (int i = 0; i < _components.Count; i++)
+                if (disposing)
                 {
-                    var disposable = _components[i] as IDisposable;
-                    if (disposable != null)
-                        disposable.Dispose();
-                }
-            }
+                    // Dispose loaded game components
+                    for (int i = 0; i < _components.Count; i++)
+                    {
+                        var disposable = _components[i] as IDisposable;
+                        if (disposable != null)
+                            disposable.Dispose();
+                    }
 
-            _isDisposed = true;
+                    if (Content != null)
+                        Content.Dispose();
+
+                    if (_graphicsDeviceManager != null)
+                    {
+                        (_graphicsDeviceManager as GraphicsDeviceManager).Dispose();
+                        _graphicsDeviceManager = null;
+                    }
+
+                    Platform.Dispose();
+                }
+                _isDisposed = true;
+            }
         }
 
         [System.Diagnostics.DebuggerNonUserCode]
@@ -232,8 +245,14 @@ namespace Microsoft.Xna.Framework
 
         public TimeSpan InactiveSleepTime
         {
-            get { throw new NotImplementedException(); }
-            set { throw new NotImplementedException(); }
+            get { return _inactiveSleepTime; }
+            set 
+            {
+                if (_inactiveSleepTime != value)
+                {
+                    _inactiveSleepTime = value;
+                }
+            }
         }
 
         public bool IsActive
@@ -330,8 +349,11 @@ namespace Microsoft.Xna.Framework
         public event EventHandler<EventArgs> Disposed;
         public event EventHandler<EventArgs> Exiting;
 
-#if WINRT
+#if WINDOWS_STOREAPP
         public event EventHandler<ViewStateChangedEventArgs> ApplicationViewChanged;
+#endif
+
+#if WINRT
         public ApplicationExecutionState PreviousExecutionState { get; internal set; }
 #endif
 
@@ -357,6 +379,26 @@ namespace Microsoft.Xna.Framework
         {
             _suppressDraw = true;
         }
+        
+        public void RunOneFrame()
+        {
+            AssertNotDisposed();
+            if (!Platform.BeforeRun())
+                return;
+
+            if (!_initialized) {
+                DoInitialize ();
+                _initialized = true;
+            }
+
+            BeginRun();
+
+            //Not quite right..
+            Tick ();
+
+            EndRun ();
+
+        }
 
         public void Run()
         {
@@ -369,8 +411,10 @@ namespace Microsoft.Xna.Framework
             if (!Platform.BeforeRun())
                 return;
 
-            DoInitialize();
-            _initialized = true;
+            if (!_initialized) {
+                DoInitialize ();
+                _initialized = true;
+            }
 
             BeginRun();
             switch (runBehavior)
@@ -430,13 +474,16 @@ namespace Microsoft.Xna.Framework
             if (_accumulatedElapsedTime > _maxElapsedTime)
                 _accumulatedElapsedTime = _maxElapsedTime;
 
-            // TODO: We should be calculating IsRunningSlowly
-            // somewhere around here!
+            // http://msdn.microsoft.com/en-us/library/microsoft.xna.framework.gametime.isrunningslowly.aspx
+            // Calculate IsRunningSlowly for the fixed time step, but only when the accumulated time
+            // exceeds the target time.
 
             if (IsFixedTimeStep)
             {
                 _gameTime.ElapsedGameTime = TargetElapsedTime;
                 var stepCount = 0;
+
+                _gameTime.IsRunningSlowly = (_accumulatedElapsedTime > TargetElapsedTime);
 
                 // Perform as many full fixed length time steps as we can.
                 while (_accumulatedElapsedTime >= TargetElapsedTime)
@@ -468,7 +515,6 @@ namespace Microsoft.Xna.Framework
             else
             {
                 DoDraw(_gameTime);
-                Platform.Present();
             }
         }
 
@@ -477,7 +523,10 @@ namespace Microsoft.Xna.Framework
         #region Protected Methods
 
         protected virtual bool BeginDraw() { return true; }
-        protected virtual void EndDraw() { }
+        protected virtual void EndDraw()
+        {
+            Platform.Present();
+        }
 
         protected virtual void BeginRun() { }
         protected virtual void EndRun() { }
@@ -539,6 +588,18 @@ namespace Microsoft.Xna.Framework
         {
             Raise(Exiting, args);
         }
+		
+		protected virtual void OnActivated (object sender, EventArgs args)
+		{
+			AssertNotDisposed();
+			Raise(Activated, args);
+		}
+		
+		protected virtual void OnDeactivated (object sender, EventArgs args)
+		{
+			AssertNotDisposed();
+			Raise(Deactivated, args);
+		}
 
         #endregion Protected Methods
 
@@ -569,25 +630,13 @@ namespace Microsoft.Xna.Framework
 			DoExiting();
         }
 
-#if WINRT
+#if WINDOWS_STOREAPP
         private void Platform_ApplicationViewChanged(object sender, ViewStateChangedEventArgs e)
         {
             AssertNotDisposed();
             Raise(ApplicationViewChanged, e);
         }
 #endif
-
-        private void Platform_Activated(object sender, EventArgs e)
-        {
-            AssertNotDisposed();
-            Raise(Activated, e);
-        }
-
-        private void Platform_Deactivated(object sender, EventArgs e)
-        {
-            AssertNotDisposed();
-            Raise(Deactivated, e);
-        }
 
         #endregion Event Handlers
 

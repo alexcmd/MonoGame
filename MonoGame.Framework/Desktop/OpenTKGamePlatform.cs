@@ -105,6 +105,8 @@ namespace Microsoft.Xna.Framework
             _view = new OpenTKGameWindow();
             _view.Game = game;
             this.Window = _view;
+
+            this.IsMouseVisible = true;
 			
 			// Setup our OpenALSoundController to handle our SoundBuffer pools
 			soundControllerInstance = OpenALSoundController.GetInstance;
@@ -151,9 +153,6 @@ namespace Microsoft.Xna.Framework
             
             // Update our OpenAL sound buffer pools
             soundControllerInstance.Update();
-
-            // Let the touch panel update states.
-            TouchPanel.UpdateState();
 
             return true;
         }
@@ -269,17 +268,25 @@ namespace Microsoft.Xna.Framework
         {
             base.Present();
 
-            if (_view != null) _view.Window.SwapBuffers();
+            var device = Game.GraphicsDevice;
+            if (device != null)
+                device.Present();
+
+            if (_view != null)
+                _view.Window.SwapBuffers();
         }
 		
         protected override void Dispose(bool disposing)
         {
-            if (_view != null)
+            if (!IsDisposed)
             {
-                _view.Dispose();
-                _view = null;
+                if (_view != null)
+                {
+                    _view.Dispose();
+                    _view = null;
+                }
             }
-			
+
 			base.Dispose(disposing);
         }
 			

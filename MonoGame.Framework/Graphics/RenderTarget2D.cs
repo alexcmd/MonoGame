@@ -79,8 +79,10 @@ namespace Microsoft.Xna.Framework.Graphics
 		public int MultiSampleCount { get; private set; }
 		
 		public RenderTargetUsage RenderTargetUsage { get; private set; }
-        
-        public bool IsContentLost { get { return false; } }
+		
+		public bool IsContentLost { get { return false; } }
+		
+		public virtual event EventHandler<EventArgs> ContentLost;
 		
 		public RenderTarget2D (GraphicsDevice graphicsDevice, int width, int height, bool mipMap, SurfaceFormat preferredFormat, DepthFormat preferredDepthFormat, int preferredMultiSampleCount, RenderTargetUsage usage)
 			:base (graphicsDevice, width, height, mipMap, preferredFormat, true)
@@ -137,8 +139,10 @@ namespace Microsoft.Xna.Framework.Graphics
 #else
 			GL.GenRenderbuffers(1, out glDepthStencilBuffer);
 #endif
-			GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, this.glDepthStencilBuffer);
-			var glDepthStencilFormat = GLDepthComponent16;
+            GraphicsExtensions.CheckGLError();
+            GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, this.glDepthStencilBuffer);
+            GraphicsExtensions.CheckGLError();
+            var glDepthStencilFormat = GLDepthComponent16;
 			switch (preferredDepthFormat)
 			{
 			case DepthFormat.Depth16: glDepthStencilFormat = GLDepthComponent16; break;
@@ -146,6 +150,7 @@ namespace Microsoft.Xna.Framework.Graphics
 			case DepthFormat.Depth24Stencil8: glDepthStencilFormat = GLDepth24Stencil8; break;
 			}
 			GL.RenderbufferStorage(GLRenderbuffer, glDepthStencilFormat, this.width, this.height);
+            GraphicsExtensions.CheckGLError();
 #endif
         }
 		
@@ -157,27 +162,39 @@ namespace Microsoft.Xna.Framework.Graphics
 			: this(graphicsDevice, width, height, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.DiscardContents) 
 		{}
 
-		public override void Dispose ()
+		protected override void Dispose(bool disposing)
 		{
+            if (!IsDisposed)
+            {
 #if DIRECTX
-            if (_renderTargetView != null)
-            {
-                _renderTargetView.Dispose();
-                _renderTargetView = null;
-            }
-            if (_depthStencilView != null)
-            {
-                _depthStencilView.Dispose();
-                _depthStencilView = null;
-            }
+                if (disposing)
+                {
+                    if (_renderTargetView != null)
+                    {
+                        _renderTargetView.Dispose();
+                        _renderTargetView = null;
+                    }
+                    if (_depthStencilView != null)
+                    {
+                        _depthStencilView.Dispose();
+                        _depthStencilView = null;
+                    }
+                }
 #elif OPENGL
-			GL.DeleteRenderbuffers(1, ref this.glDepthStencilBuffer);
+                GraphicsDevice.AddDisposeAction(() =>
+                    {
+                        GL.DeleteRenderbuffers(1, ref this.glDepthStencilBuffer);
+                        GraphicsExtensions.CheckGLError();
 
-			if(this.glFramebuffer > 0)
-				GL.DeleteFramebuffers(1, ref this.glFramebuffer);
-
+                        if (this.glFramebuffer > 0)
+                        {
+                            GL.DeleteFramebuffers(1, ref this.glFramebuffer);
+                            GraphicsExtensions.CheckGLError();
+                        }
+                    });
 #endif
-            base.Dispose();
+            }
+            base.Dispose(disposing);
 		}
 	}
 }

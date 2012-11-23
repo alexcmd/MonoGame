@@ -40,7 +40,7 @@ purpose and non-infringement.
 
 using System;
 
-#if WINRT 
+#if WINDOWS_STOREAPP
 using Windows.UI.Xaml.Controls;
 #endif
 
@@ -118,10 +118,10 @@ namespace Microsoft.Xna.Framework.Graphics
             get { return deviceWindowHandle; }
             set { deviceWindowHandle = value; }
         }
-		
-#if WINRT 
+
+#if WINDOWS_STOREAPP
         public SwapChainBackgroundPanel SwapChainPanel { get; set; }
-#endif 
+#endif
 
         public DepthFormat DepthStencilFormat
         {
@@ -133,11 +133,19 @@ namespace Microsoft.Xna.Framework.Graphics
         {
 			get
             {
+#if WINRT
+                // Always return true for Windows 8
+                return true;
+#else
 				 return isFullScreen;
+#endif
             }
             set
             {
+#if !WINRT
+                // If we are not on windows 8 set the value otherwise ignore it.
 				isFullScreen = value;				
+#endif
 #if IPHONE
 				UIApplication.SharedApplication.StatusBarHidden = isFullScreen;
 #endif

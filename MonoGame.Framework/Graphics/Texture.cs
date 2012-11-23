@@ -50,6 +50,7 @@ using OpenTK.Graphics.OpenGL;
 #elif GLES
 using OpenTK.Graphics.ES20;
 using TextureTarget = OpenTK.Graphics.ES20.All;
+using TextureUnit = OpenTK.Graphics.ES20.All;
 #endif
 
 
@@ -69,6 +70,8 @@ namespace Microsoft.Xna.Framework.Graphics
 #elif OPENGL
 		internal int glTexture = -1;
 		internal TextureTarget glTarget;
+        internal TextureUnit glTextureUnit = TextureUnit.Texture0;
+        internal SamplerState glLastSamplerState = null;
 #endif
 		
 		public SurfaceFormat Format
@@ -143,45 +146,56 @@ namespace Microsoft.Xna.Framework.Graphics
             return pitch;
         }
 
-#if OPENGL
-		internal virtual void Activate()
-        {
-			GL.BindTexture(glTarget, this.glTexture);
-        }
-#endif
-
 #if DIRECTX
 
         internal SharpDX.Direct3D11.ShaderResourceView GetShaderResourceView()
         {
             if (_resourceView == null)
-                _resourceView = new SharpDX.Direct3D11.ShaderResourceView(graphicsDevice._d3dDevice, _texture);
+                _resourceView = new SharpDX.Direct3D11.ShaderResourceView(GraphicsDevice._d3dDevice, _texture);
 
             return _resourceView;
         }
 
 #endif
 
-        public override void Dispose()
-		{
-#if DIRECTX
-
-            if (_resourceView != null)
-            {
-                _resourceView.Dispose();
-                _resourceView = null;
-            }
-
-            if (_texture != null)
-            {
-                _texture.Dispose();
-                _texture = null;
-            }
-
-#elif OPENGL
-			GL.DeleteTextures(1, ref glTexture);
+        internal protected override void GraphicsDeviceResetting()
+        {
+#if OPENGL
+            this.glTexture = -1;
 #endif
-            base.Dispose();
+        }
+
+        protected override void Dispose(bool disposing)
+		{
+            if (!IsDisposed)
+            {
+#if DIRECTX
+                if (disposing)
+                {
+                    if (_resourceView != null)
+                    {
+                        _resourceView.Dispose();
+                        _resourceView = null;
+                    }
+
+                    if (_texture != null)
+                    {
+                        _texture.Dispose();
+                        _texture = null;
+                    }
+                }
+#elif OPENGL
+                GraphicsDevice.AddDisposeAction(() =>
+                    {
+                        GL.DeleteTextures(1, ref glTexture);
+                        GraphicsExtensions.CheckGLError();
+                        glTexture = -1;
+                    });
+
+                glLastSamplerState = null;
+#endif
+            }
+            base.Dispose(disposing);
 		}
 		
 	}

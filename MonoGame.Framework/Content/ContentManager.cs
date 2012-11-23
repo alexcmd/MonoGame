@@ -66,14 +66,25 @@ namespace Microsoft.Xna.Framework.Content
         private bool disposed;
 		
 		private static object ContentManagerLock = new object();
-        private static List<ContentManager> ContentManagers = new List<ContentManager>();
+        private static List<WeakReference> ContentManagers = new List<WeakReference>();
 
         private static void AddContentManager(ContentManager contentManager)
         {
             lock (ContentManagerLock)
             {
-                if (!ContentManagers.Contains(contentManager))
-                    ContentManagers.Add(contentManager);
+                // Check if the list contains this content manager already. Also take
+                // the opportunity to prune the list of any finalized content managers.
+                bool contains = false;
+                for (int i = ContentManagers.Count - 1; i >= 0; --i)
+                {
+                    var contentRef = ContentManagers[i];
+                    if (Object.ReferenceEquals(contentRef.Target, contentManager))
+                        contains = true;
+                    if (!contentRef.IsAlive)
+                        ContentManagers.RemoveAt(i);
+                }
+                if (!contains)
+                    ContentManagers.Add(new WeakReference(contentManager));
             }
         }
 
@@ -81,8 +92,14 @@ namespace Microsoft.Xna.Framework.Content
         {
             lock (ContentManagerLock)
             {
-                if(ContentManagers.Contains(contentManager))
-                    ContentManagers.Remove(contentManager);
+                // Check if the list contains this content manager and remove it. Also
+                // take the opportunity to prune the list of any finalized content managers.
+                for (int i = ContentManagers.Count - 1; i >= 0; --i)
+                {
+                    var contentRef = ContentManagers[i];
+                    if (!contentRef.IsAlive || Object.ReferenceEquals(contentRef.Target, contentManager))
+                        ContentManagers.RemoveAt(i);
+                }
             }
         }
 
@@ -90,9 +107,21 @@ namespace Microsoft.Xna.Framework.Content
         {
             lock (ContentManagerLock)
             {
-                foreach (var contentManager in ContentManagers)
+                // Reload the graphic assets of each content manager. Also take the
+                // opportunity to prune the list of any finalized content managers.
+                for (int i = ContentManagers.Count - 1; i >= 0; --i)
                 {
-                    contentManager.ReloadGraphicsAssets();
+                    var contentRef = ContentManagers[i];
+                    if (contentRef.IsAlive)
+                    {
+                        var contentManager = (ContentManager)contentRef.Target;
+                        if (contentManager != null)
+                            contentManager.ReloadGraphicsAssets();
+                    }
+                    else
+                    {
+                        ContentManagers.RemoveAt(i);
+                    }
                 }
             }
         }
@@ -145,11 +174,11 @@ namespace Microsoft.Xna.Framework.Content
             RemoveContentManager(this);
 		}
 
-		// If disposing is true, it was called explicitly.
-		// If disposing is false, it was called by the finalizer.
+		// If disposing is true, it was called explicitly and we should dispose managed objects.
+		// If disposing is false, it was called by the finalizer and managed objects should not be disposed.
 		protected virtual void Dispose(bool disposing)
 		{
-			if (disposing && !disposed)
+			if (!disposed)
 			{
 				Unload();
 				disposed = true;
@@ -191,7 +220,7 @@ namespace Microsoft.Xna.Framework.Content
 			Stream stream;
 			try
             {
-                string assetPath = Path.Combine(_rootDirectory, assetName) + ".xnb";
+                string assetPath = Path.Combine(RootDirectoryFullPath, assetName) + ".xnb";
                 stream = TitleContainer.OpenStream(assetPath);
 
 #if ANDROID
@@ -231,10 +260,7 @@ namespace Microsoft.Xna.Framework.Content
 			{
 				throw new ObjectDisposedException("ContentManager");
 			}
-			
-			var lastPathSeparatorIndex = Math.Max(assetName.LastIndexOf('\\'), assetName.LastIndexOf('/'));
-			CurrentAssetDirectory = lastPathSeparatorIndex == -1 ? RootDirectory : assetName.Substring(0, lastPathSeparatorIndex);
-			
+						
 			string originalAssetName = assetName;
 			object result = null;
 
@@ -277,103 +303,109 @@ namespace Microsoft.Xna.Framework.Content
             catch (ContentLoadException)
             {
 				//MonoGame try to load as a non-content file
-				
-				assetName = TitleContainer.GetFilename(Path.Combine (_rootDirectory, assetName));
 
-				if (typeof(T) == typeof(Texture2D) || typeof(T) == typeof(Texture))
-				{
-					assetName = Texture2DReader.Normalize(assetName);
-				}
-				else if ((typeof(T) == typeof(SpriteFont)))
-				{
-					assetName = SpriteFontReader.Normalize(assetName);
-				}
-#if !WINRT
-				else if ((typeof(T) == typeof(Song)))
-				{
-					assetName = SongReader.Normalize(assetName);
-				}
-				else if ((typeof(T) == typeof(SoundEffect)))
-				{
-					assetName = SoundEffectReader.Normalize(assetName);
-				}
-				else if ((typeof(T) == typeof(Video)))
-				{
-					assetName = Video.Normalize(assetName);
-				}
-#endif
-                else if ((typeof(T) == typeof(Effect)))
-				{
-					assetName = EffectReader.Normalize(assetName);
-				}
+                assetName = TitleContainer.GetFilename(Path.Combine(RootDirectoryFullPath, assetName));
+
+                assetName = Normalize<T>(assetName);
 	
 				if (string.IsNullOrEmpty(assetName))
 				{
 					throw new ContentLoadException("Could not load " + originalAssetName + " asset!");
 				}
 
-				if (typeof(T) == typeof(Texture2D) || typeof(T) == typeof(Texture))
-				{
-					using (Stream assetStream = TitleContainer.OpenStream(assetName))
-					{
-						Texture2D texture = Texture2D.FromStream(
-							graphicsDeviceService.GraphicsDevice, assetStream);
-						texture.Name = originalAssetName;
-						result = texture;
-					}
-				}
-				else if ((typeof(T) == typeof(SpriteFont)))
-				{
-					//result = new SpriteFont(Texture2D.FromFile(graphicsDeviceService.GraphicsDevice,assetName), null, null, null, 0, 0.0f, null, null);
-					throw new NotImplementedException();
-				}
-#if !WINRT
-				else if ((typeof(T) == typeof(Song)))
-				{
-					result = new Song(assetName);
-				}
-				else if ((typeof(T) == typeof(SoundEffect)))
-				{
-					result = new SoundEffect(assetName);
-				}
-				else if ((typeof(T) == typeof(Video)))
-				{
-					result = new Video(assetName);
-				}
-#endif
-                else if ((typeof(T) == typeof(Effect)))
-				{
-					using (Stream assetStream = TitleContainer.OpenStream(assetName))
-					{
-						var data = new byte[assetStream.Length];
-						assetStream.Read (data, 0, (int)assetStream.Length);
-						result = new Effect(this.graphicsDeviceService.GraphicsDevice, data);
-                    }
+                result = ReadRawAsset<T>(assetName, originalAssetName);
+
+                // Because Raw Assets skip the ContentReader step, they need to have their
+                // disopsables recorded here. Doing it outside of this catch will 
+                // result in disposables being logged twice.
+                if (result is IDisposable)
+                {
+                    if (recordDisposableObject != null)
+                        recordDisposableObject(result as IDisposable);
+                    else
+                        disposableAssets.Add(result as IDisposable);
                 }
 			}			
             
 			if (result == null)
-			{
 				throw new ContentLoadException("Could not load " + originalAssetName + " asset!");
-			}
 
-			if (result is IDisposable)
-			{
-				if (recordDisposableObject != null)
-					recordDisposableObject(result as IDisposable);
-				else
-					disposableAssets.Add(result as IDisposable);
-			}
-
-			if (result == null)
-			{
-				throw new ContentLoadException("Could not load " + originalAssetName + " asset!");
-			}
-		
-			CurrentAssetDirectory = null;
-			
 			return (T)result;
 		}
+
+        protected virtual string Normalize<T>(string assetName)
+        {
+            if (typeof(T) == typeof(Texture2D) || typeof(T) == typeof(Texture))
+            {
+                return Texture2DReader.Normalize(assetName);
+            }
+            else if ((typeof(T) == typeof(SpriteFont)))
+            {
+                return SpriteFontReader.Normalize(assetName);
+            }
+#if !WINRT
+            else if ((typeof(T) == typeof(Song)))
+            {
+                return SongReader.Normalize(assetName);
+            }
+            else if ((typeof(T) == typeof(SoundEffect)))
+            {
+                return SoundEffectReader.Normalize(assetName);
+            }
+            else if ((typeof(T) == typeof(Video)))
+            {
+                return Video.Normalize(assetName);
+            }
+#endif
+            else if ((typeof(T) == typeof(Effect)))
+            {
+                return EffectReader.Normalize(assetName);
+            }
+            return null;
+        }
+
+        protected virtual object ReadRawAsset<T>(string assetName, string originalAssetName)
+        {
+            if (typeof(T) == typeof(Texture2D) || typeof(T) == typeof(Texture))
+            {
+                using (Stream assetStream = TitleContainer.OpenStream(assetName))
+                {
+                    Texture2D texture = Texture2D.FromStream(
+                        graphicsDeviceService.GraphicsDevice, assetStream);
+                    texture.Name = originalAssetName;
+                    return texture;
+                }
+            }
+            else if ((typeof(T) == typeof(SpriteFont)))
+            {
+                //result = new SpriteFont(Texture2D.FromFile(graphicsDeviceService.GraphicsDevice,assetName), null, null, null, 0, 0.0f, null, null);
+                throw new NotImplementedException();
+            }
+#if !WINRT
+            else if ((typeof(T) == typeof(Song)))
+            {
+                return new Song(assetName);
+            }
+            else if ((typeof(T) == typeof(SoundEffect)))
+            {
+                return new SoundEffect(assetName);
+            }
+            else if ((typeof(T) == typeof(Video)))
+            {
+                return new Video(assetName);
+            }
+#endif
+            else if ((typeof(T) == typeof(Effect)))
+            {
+                using (Stream assetStream = TitleContainer.OpenStream(assetName))
+                {
+                    var data = new byte[assetStream.Length];
+                    assetStream.Read(data, 0, (int)assetStream.Length);
+                    return new Effect(this.graphicsDeviceService.GraphicsDevice, data);
+                }
+            }
+            return null;
+        }
 
         private ContentReader GetContentReaderFromXnb(string originalAssetName, ref Stream stream, BinaryReader xnbReader, Action<IDisposable> recordDisposableObject)
         {
@@ -583,23 +615,25 @@ namespace Microsoft.Xna.Framework.Content
 				// Try to reload as a non-xnb file.
                 // Just textures supported for now.
 
-				assetName = TitleContainer.GetFilename(Path.Combine (_rootDirectory, assetName));
-				
-                if ((currentAsset is Texture2D))
-                {
-                    assetName = Texture2DReader.Normalize(assetName);
-                }
+                assetName = TitleContainer.GetFilename(Path.Combine(RootDirectoryFullPath, assetName));
 
-                if (currentAsset is Texture2D)
-                {
-                    using (Stream assetStream = TitleContainer.OpenStream(assetName))
-                    {
-                        var asset = currentAsset as Texture2D;
-                        asset.Reload(assetStream);
-                    }
-                }
+                assetName = Normalize<T>(assetName);
+
+                ReloadRawAsset(currentAsset, assetName, originalAssetName);
             }
 		}
+
+        protected virtual void ReloadRawAsset<T>(T asset, string assetName, string originalAssetName)
+        {
+            if (asset is Texture2D)
+            {
+                using (Stream assetStream = TitleContainer.OpenStream(assetName))
+                {
+                    var textureAsset = asset as Texture2D;
+                    textureAsset.Reload(assetStream);
+                }
+            }
+        }
 
 		public virtual void Unload()
 		{
@@ -624,9 +658,19 @@ namespace Microsoft.Xna.Framework.Content
 				_rootDirectory = value;
 			}
 		}
-		
-		public string CurrentAssetDirectory { get; set; }
 
+        internal string RootDirectoryFullPath
+        {
+            get
+            {
+#if WINDOWS || LINUX || MACOS
+				return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, RootDirectory);
+#else
+                return RootDirectory;
+#endif
+            }
+        }
+		
 		public IServiceProvider ServiceProvider
 		{
 			get

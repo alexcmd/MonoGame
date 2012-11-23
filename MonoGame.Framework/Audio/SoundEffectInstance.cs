@@ -1,4 +1,4 @@
-#region License
+﻿#region License
 // /*
 // Microsoft Public License (Ms-PL)
 // MonoGame - Copyright © 2009 The MonoGame Team
@@ -52,11 +52,16 @@ namespace Microsoft.Xna.Framework.Audio
 	public sealed class SoundEffectInstance : IDisposable
 	{
 		private bool isDisposed = false;
+#if !WINRT
 		private SoundState soundState = SoundState.Stopped;
+#endif
+#if ANDROID
+        private int _streamId = -1;
+#endif
 
 #if WINRT        
-        internal SourceVoice _voice { get; set; }
-        internal SoundEffect _effect { get; set; }
+        private SourceVoice _voice { get; set; }
+        private SoundEffect _effect { get; set; }
 
         private bool _paused;
         private bool _loop;
@@ -76,26 +81,42 @@ namespace Microsoft.Xna.Framework.Audio
 		}
 #endif
 
-        internal SoundEffectInstance()
-		{			
-		}
-		
+#if WINRT
+        internal SoundEffectInstance(SoundEffect effect, SourceVoice voice)
+        {
+            _effect = effect;
+            _voice = voice;
+        }
+#endif
+
 		public void Dispose()
 		{
 #if WINRT
-            _voice.DestroyVoice();
-            _voice.Dispose();
-            _voice = null;
-            _effect = null;
+            if (_voice != null)
+            {
+                _voice.DestroyVoice();
+                _voice.Dispose();
+                _voice = null;
+            }
+		    _effect = null;
+#elif ANDROID
+            if (_streamId >= 0)
+                _sound.Stop(_streamId);
 #else
-			_sound.Dispose();
+            // When disposing a SoundEffectInstance, the Sound should
+            // just be stopped as it will likely be reused later
+            _sound.Stop();
 #endif
 			isDisposed = true;
 		}
 		
 		public void Apply3D (AudioListener listener, AudioEmitter emitter)
 		{
-#if WINRT		
+#if WINRT	
+            // If we have no voice then nothing to do.
+            if (_voice == null)
+                return;
+
             // Convert from XNA Emitter to a SharpDX Emitter
             var e = emitter.ToEmitter();
             e.CurveDistanceScaler = SoundEffect.DistanceScale;
@@ -131,41 +152,56 @@ namespace Microsoft.Xna.Framework.Audio
 		
 		public void Pause ()
 		{
-#if WINRT            
-            _voice.Stop();
+#if WINRT         
+            if (_voice != null)
+                _voice.Stop();
             _paused = true;
 #else
             if ( _sound != null )
 			{
+#if ANDROID
+				_sound.Pause(_streamId);
+#else
 				_sound.Pause();
-				soundState = SoundState.Paused;
+#endif
+                soundState = SoundState.Paused;
 			}
 #endif
 		}
 		
 		public void Play ()
 		{
-#if WINRT              
-            // Choose the correct buffer depending on if we are looped.            
-            var buffer = _loop ? _effect._loopedBuffer : _effect._buffer;
-
-            if (_voice.State.BuffersQueued > 0)
+#if WINRT
+            if (_voice != null)
             {
-                _voice.Stop();
-                _voice.FlushSourceBuffers();
+                // Choose the correct buffer depending on if we are looped.            
+                var buffer = _loop ? _effect._loopedBuffer : _effect._buffer;
+
+                if (_voice.State.BuffersQueued > 0)
+                {
+                    _voice.Stop();
+                    _voice.FlushSourceBuffers();
+                }
+
+                _voice.SubmitSourceBuffer(buffer, null);
+                _voice.Start();
             }
 
-            _voice.SubmitSourceBuffer(buffer, null);
-            _voice.Start();
-
-            _paused = false;
+		    _paused = false;
 #else
 			if ( _sound != null )
 			{
+#if ANDROID
+				if (soundState == SoundState.Paused)
+					_sound.Resume(_streamId);
+				else
+					_streamId = _sound.Play();
+#else
 				if (soundState == SoundState.Paused)
 					_sound.Resume();
 				else
 					_sound.Play();
+#endif
 				soundState = SoundState.Playing;
 			}
 #endif
@@ -174,23 +210,45 @@ namespace Microsoft.Xna.Framework.Audio
 		public void Resume()
 		{
 #if WINRT
-            _voice.Start();
+            if (_voice != null)
+                _voice.Start();
             _paused = false;
 #else
+			if ( _sound != null )
+			{
+				if (soundState == SoundState.Paused)
+				{
+#if ANDROID
+					_sound.Resume(_streamId);
+#else
+                    _sound.Resume();
+#endif
+                }
+				soundState = SoundState.Playing;
+ 			}
 #endif
 		}
 		
 		public void Stop()
 		{
 #if WINRT
-            _voice.Stop(0);
-            _voice.FlushSourceBuffers();
-            _paused = false;
+            if (_voice != null)
+            {
+                _voice.Stop(0);
+                _voice.FlushSourceBuffers();
+            }
+
+		    _paused = false;
 #else
 			if ( _sound != null )
 			{
-				_sound.Stop();
-				soundState = SoundState.Stopped;
+#if ANDROID
+				_sound.Stop(_streamId);
+				_streamId = -1;
+#else
+                _sound.Stop();
+#endif
+                soundState = SoundState.Stopped;
 			}
 #endif
         }
@@ -198,12 +256,19 @@ namespace Microsoft.Xna.Framework.Audio
         public void Stop(bool immediate)
         {
 #if WINRT            
-            _voice.Stop( immediate ? 0 : (int)PlayFlags.Tails );
+            if (_voice != null)
+                _voice.Stop(immediate ? 0 : (int)PlayFlags.Tails);
+
             _paused = false;
 #else
 			if ( _sound != null )
 			{
-				_sound.Stop();
+#if ANDROID
+                _sound.Stop(_streamId);
+                _streamId = -1;
+#else
+                _sound.Stop();
+#endif
 				soundState = SoundState.Stopped;
 			}
 #endif
@@ -276,10 +341,14 @@ namespace Microsoft.Xna.Framework.Audio
 			
 			set
 			{
-#if WINRT                
+#if WINRT       
                 // According to XNA documentation:
                 // "Panning, ranging from -1.0f (full left) to 1.0f (full right). 0.0f is centered."
                 _pan = MathHelper.Clamp(value, -1.0f, 1.0f);
+
+                // If we have no voice then nothing more to do.
+                if (_voice == null)
+                    return;
                 
                 var srcChannelCount = _effect._format.Channels;
                 var dstChannelCount = SoundEffect.MasterVoice.VoiceDetails.InputChannelCount;
@@ -377,6 +446,9 @@ namespace Microsoft.Xna.Framework.Audio
 	            get
 	            {                    
 #if WINRT
+                    if (_voice == null)
+                        return 0.0f;
+
                     // NOTE: This is copy of what XAudio2.FrequencyRatioToSemitones() does
                     // which avoids the native call and is actually more accurate.
                     var pitch = 39.86313713864835 * Math.Log10(_voice.FrequencyRatio);
@@ -396,6 +468,9 @@ namespace Microsoft.Xna.Framework.Audio
 	            set
 	            {
 #if WINRT
+                    if (_voice == null)
+                        return;
+
                     // NOTE: This is copy of what XAudio2.SemitonesToFrequencyRatio() does
                     // which avoids the native call and is actually more accurate.
                     var ratio = Math.Pow(2.0, value);
@@ -414,11 +489,9 @@ namespace Microsoft.Xna.Framework.Audio
 			get
 			{
 #if WINRT           
-                // If no buffers queued the sound is stopped.
-                if (_voice.State.BuffersQueued == 0)
-                {
+                // If no voice or no buffers queued the sound is stopped.
+                if (_voice == null || _voice.State.BuffersQueued == 0)
                     return SoundState.Stopped;
-                }
                 
                 // Because XAudio2 does not actually provide if a SourceVoice is Started / Stopped
                 // we have to save the "paused" state ourself.
@@ -426,11 +499,26 @@ namespace Microsoft.Xna.Framework.Audio
                     return SoundState.Paused;
 
                 return SoundState.Playing;                                
+#elif ANDROID
+                // Android SoundPool can't tell us when a sound is finished playing.
+                // TODO: Remove this code when OpenAL for Android is implemented
+                if (_sound != null && IsLooped)
+                {
+                    // Looping sounds use our stored state
+                    return soundState;
+                }
+                else
+                {
+                    // Non looping sounds always return Stopped
+                    return SoundState.Stopped;
+                }
 #else
-				if (_sound != null && soundState == SoundState.Playing && !_sound.Playing) {
-					soundState = SoundState.Stopped;
-				}
-				return soundState;
+                if (_sound != null && soundState == SoundState.Playing && !_sound.Playing) 
+                {
+                    soundState = SoundState.Stopped;
+                }
+
+                return soundState;
 #endif
 			} 
 		}
@@ -440,7 +528,10 @@ namespace Microsoft.Xna.Framework.Audio
 			get
 			{
 #if WINRT
-                return _voice.Volume;
+                if (_voice == null)
+                    return 0.0f;
+                else
+                    return _voice.Volume;
 #else
 				if (_sound != null)
 				{
@@ -456,7 +547,8 @@ namespace Microsoft.Xna.Framework.Audio
 			set
 			{
 #if WINRT
-                _voice.SetVolume(value, XAudio2.CommitNow);
+                if (_voice != null)
+                    _voice.SetVolume(value, XAudio2.CommitNow);
 #else
 				if ( _sound != null )
 				{
